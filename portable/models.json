@@ -13,26 +13,26 @@
     "  relay-200   = 虾盘云中转站实测可用（只对 uclaw-cloud 卡决定性，不能证明直连可用）",
     "  unverified  = 没拿到证据，沿用历史值，别当作正确"
   ],
-  "updated": "2026-09-16",
+  "updated": "2026-07-27",
   "providers": [
     {
       "id": "uclaw-cloud",
-      "baseUrl": "https://api.u-claw.org.cn/v1",
+      "baseUrl": "https://api.u-claw.org/v1",
       "model": "deepseek-v4-flash",
       "title": "虾盘云",
       "tags": [
         {
           "cls": "hot",
-          "text": "推荐"
+          "text": "首选"
         },
         {
-          "cls": "cn",
-          "text": "国内直连"
+          "cls": "",
+          "text": "中转站"
         }
       ],
-      "desc": "一个 Key 可用多种模型；注册、创建 Key、充值后粘贴到这里即可使用",
-      "link": "https://api.u-claw.org.cn/register",
-      "linkText": "→ 注册并获取 API Key",
+      "desc": "一个 Key 用 DeepSeek / Claude / GPT / 通义 等国内外全部大模型，无需翻墙",
+      "link": "https://u-claw.org/cloud.html",
+      "linkText": "→ 注册 / 充值 / 获取 API Key",
       "verified": "relay-200",
       "models": [
         "deepseek-v4-flash",

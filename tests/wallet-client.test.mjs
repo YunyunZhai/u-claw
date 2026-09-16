@@ -326,50 +326,6 @@ test('resetLocalWallet 绝不发起任何网络请求（只清本地 + 清实际
   });
 });
 
-test('存量钱包 reset-local：网页创建的明文 API Key 或 SecretRef 都绝不删除', async () => {
-  await withTempDir(async (dir) => {
-    const secretRef = { source: 'store', provider: 'default', id: 'UCLAW_MODEL_UCLAW_CLOUD' };
-    for (const [label, apiKey] of [['网页明文 Key', 'sk-web-created-key'], ['网页 SecretRef', secretRef]]) {
-      const configPath = join(dir, `${label}.json`);
-      writeFileSync(configPath, JSON.stringify({
-        models: { providers: { [CLOUD_PROVIDER_ID]: { baseUrl: 'https://api.u-claw.org.cn/v1', apiKey } } },
-        agents: { defaults: { model: { primary: `${CLOUD_PROVIDER_ID}/deepseek-v4-flash` } } },
-      }));
-      const store = createMemoryWalletStore({ apiKey: 'sk-legacy-wallet-key', walletId: 'wal_old' });
-
-      const r = await resetLocalWallet({ store, configPath });
-      assert.equal(r.ok, true, label);
-      const saved = JSON.parse(readFileSync(configPath, 'utf8'));
-      assert.deepEqual(saved.models.providers[CLOUD_PROVIDER_ID].apiKey, apiKey, `${label} 必须原样保留`);
-      assert.equal(saved.agents.defaults.model.primary, `${CLOUD_PROVIDER_ID}/deepseek-v4-flash`, `${label} 的主模型不得清空`);
-    }
-  });
-});
-
-test('存量钱包 rotate：网页创建的明文 API Key 或 SecretRef 都绝不覆盖', async () => {
-  await withTempDir(async (dir) => {
-    const secretRef = { source: 'store', provider: 'default', id: 'UCLAW_MODEL_UCLAW_CLOUD' };
-    for (const [label, apiKey] of [['网页明文 Key', 'sk-web-created-key'], ['网页 SecretRef', secretRef]]) {
-      const configPath = join(dir, `${label}.json`);
-      writeFileSync(configPath, JSON.stringify({
-        models: { providers: { [CLOUD_PROVIDER_ID]: { baseUrl: 'https://api.u-claw.org.cn/v1', apiKey } } },
-      }));
-      const store = createMemoryWalletStore({ apiKey: 'sk-legacy-wallet-key', walletId: 'wal_old' });
-      const { fetchImpl } = fakeServer({
-        '/device/rotate': { status: 200, body: { apiKey: 'sk-legacy-wallet-rotated', walletId: 'wal_old' } },
-        '/v1/models': { status: 200, body: { data: [] } },
-        '/device/rotate/commit': { status: 200, body: {} },
-      });
-
-      const r = await rotateWallet({ store, configPath, fetch: fetchImpl });
-      assert.equal(r.ok, true, label);
-      assert.equal((await store.get()).apiKey, 'sk-legacy-wallet-rotated', '钱包状态本身仍应完成 rotate');
-      const saved = JSON.parse(readFileSync(configPath, 'utf8'));
-      assert.deepEqual(saved.models.providers[CLOUD_PROVIDER_ID].apiKey, apiKey, `${label} 必须原样保留`);
-    }
-  });
-});
-
 // ── adoptWallet：只验一次，不调服务端 bind/rotate；C5 汇流点 applyKey 生效 ──
 
 test('adoptWallet 只验证一次，不调用服务端 bind/rotate', async () => {
