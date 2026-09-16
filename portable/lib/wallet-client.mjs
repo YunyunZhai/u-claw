@@ -30,7 +30,7 @@
 //   C2 rotate 的验证只用只读接口（GET /v1/models），不消耗额度
 //   C3 pendingKind 不认识就原样返回，不猜
 //   C4 单一真相源 + in-flight 去重（并发调用复用同一个 Promise）
-//   C5 领取/rotate/adopt 三条路径都汇到同一个 applyKey()
+//   C5 旧钱包的领取/rotate/adopt 三条路径都汇到同一个 applyKey()
 //   C6 存储损坏的取舍：get() 抛出时视为"还没绑定"，代价是可能重新领一个空钱包——
 //      所以界面必须提供"填入已有密钥"的 adopt 入口。
 
@@ -317,14 +317,61 @@ export function removeKey(configPath) {
   return saveConfigMerged(configPath, incoming);
 }
 
-function applyKeyToConfig(apiKey, deps) {
-  const configPath = deps.configPath || defaultConfigPath();
-  return applyKey(configPath, apiKey, { apiBase: deps.apiBase, setPrimary: deps.setPrimary });
+// ── 网页 API Key 与旧设备钱包共存 ──────────────────────────────────────────
+//
+// 新用户现在在网页创建 Key；配置中心会把它写成 SecretRef。设备钱包是存量兼容，
+// 不能因为它们恰好都使用 uclaw-cloud provider 就把网页 Key 覆盖或删除。
+//
+// 这里故意不尝试解开 SecretRef：钱包没有、也不该有 secret store 的读取权限。只有
+// provider.apiKey 是明文字符串，并且严格等于本地钱包状态中已知的某一把 key，才算
+// "owned"。配置读不出、对象/SecretRef、空值及任何不相等的字符串，全都保守视为
+// foreign/opaque 并原样保留。文件/Provider 不存在不需要保护，旧钱包可以补上自己的
+// 消费者配置。
+function walletKnownKeys(...states) {
+  const keys = new Set();
+  for (const state of states) {
+    for (const key of [state?.apiKey, state?.pendingKey, state?.pendingFrom]) {
+      if (typeof key === 'string' && key) keys.add(key);
+    }
+  }
+  return keys;
 }
 
-function removeKeyFromConfig(deps) {
+function inspectWalletConsumer(configPath, knownKeys) {
+  try {
+    if (!configPath || !fs.existsSync(configPath)) return { kind: 'missing' };
+    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    if (!isPlainObject(parsed)) return { kind: 'unreadable' };
+    const provider = parsed.models?.providers?.[CLOUD_PROVIDER_ID];
+    if (provider === undefined) return { kind: 'missing' };
+    const apiKey = isPlainObject(provider) ? provider.apiKey : undefined;
+    if (typeof apiKey !== 'string') return { kind: 'opaque' };
+    return knownKeys.has(apiKey) ? { kind: 'owned' } : { kind: 'foreign' };
+  } catch {
+    return { kind: 'unreadable' };
+  }
+}
+
+/**
+ * 旧钱包同步到配置的唯一入口。每次网络 await 之后、真正写盘之前都会重新检查
+ * live config；这样网页新保存的 Key（尤其 SecretRef）不会被过期的钱包操作盖掉。
+ */
+function syncWalletKeyToConfig(apiKey, deps, ...states) {
   const configPath = deps.configPath || defaultConfigPath();
-  return removeKey(configPath);
+  const ownership = inspectWalletConsumer(configPath, walletKnownKeys(...states));
+  if (ownership.kind !== 'missing' && ownership.kind !== 'owned') {
+    return { synced: false, ownership: ownership.kind };
+  }
+  applyKey(configPath, apiKey, { apiBase: deps.apiBase, setPrimary: deps.setPrimary });
+  return { synced: true, ownership: ownership.kind };
+}
+
+function removeWalletKeyFromConfig(deps, ...states) {
+  const configPath = deps.configPath || defaultConfigPath();
+  const ownership = inspectWalletConsumer(configPath, walletKnownKeys(...states));
+  if (ownership.kind !== 'owned') return { removed: false, ownership: ownership.kind };
+  removeKey(configPath);
+  return { removed: true, ownership: ownership.kind };
 }
 
 // ---------------------------------------------------------------------------
@@ -377,7 +424,8 @@ async function settlePendingState(state, store, fetchImpl, verify, deps) {
 
   const next = { ...state, apiKey: pending, pendingKey: '', pendingKind: '', pendingFrom: '' };
   await store.set(next);
-  applyKeyToConfig(next.apiKey, deps); // C5：换 key 后同步到实际消费者
+  // commit 是网络 await；写配置前在 syncWalletKeyToConfig 内重查 live config。
+  syncWalletKeyToConfig(next.apiKey, deps, state, next); // C5：只同步仍属于旧钱包的消费者
   return next;
 }
 
@@ -458,9 +506,16 @@ async function doClaim(deps) {
       return { ok: false, error: describeClaimFailure(res) };
     }
 
+    // bind 返回前，用户也可能已经在网页流程保存了 Key。重新读本地状态，避免把
+    // 并发恢复的旧钱包状态盖掉；配置归属仍由下方的严格判定保护。
+    const latest = await store.get();
+    if (latest.apiKey) {
+      return { ok: true, apiKey: latest.apiKey, walletId: latest.walletId, alreadyClaimed: true };
+    }
+
     const next = { ...EMPTY_STATE, apiKey: res.body.apiKey, walletId: res.body.walletId || '' };
     await store.set(next);
-    applyKeyToConfig(next.apiKey, deps); // C5
+    syncWalletKeyToConfig(next.apiKey, deps, state, next); // C5；不覆盖网页 Key / SecretRef
     return { ok: true, apiKey: next.apiKey, walletId: next.walletId, alreadyClaimed: false };
   } catch (error) {
     return { ok: false, error: describeError(error) };
@@ -562,6 +617,12 @@ async function doRotate(deps) {
       if (res.status !== 200 || !res.body.apiKey) {
         return { ok: false, error: `换密钥失败：HTTP ${res.status} ${res.body?.error || ''}`.trim() };
       }
+      // mint 是网络 await。若另一窗口已恢复/更新了钱包，宁可保留最新本地状态，
+      // 不用本次过期快照覆盖它；pending 可由该窗口自己继续收尾。
+      const latest = await store.get();
+      if (latest.apiKey !== state.apiKey || latest.pendingKey) {
+        return { ok: false, error: '钱包状态已在别处更新，本次未覆盖；请刷新后重试' };
+      }
       state = {
         ...state,
         walletId: res.body.walletId || state.walletId,
@@ -611,8 +672,12 @@ export async function adoptWallet(key, deps = {}) {
 
   const store = deps.store || defaultStore();
   try {
-    await store.set({ ...EMPTY_STATE, apiKey: trimmed, walletId: '' });
-    applyKeyToConfig(trimmed, deps); // C5
+    // verify 是网络 await；写盘前重读状态，并在同步配置时重查 live consumer。
+    // 这样网页 Key 即使在验证期间被保存，也不会被“恢复旧钱包”覆盖。
+    const before = await store.get();
+    const next = { ...EMPTY_STATE, apiKey: trimmed, walletId: '' };
+    await store.set(next);
+    syncWalletKeyToConfig(trimmed, deps, before, next); // C5；foreign / SecretRef 保守保留
     return { ok: true, apiKey: trimmed };
   } catch (error) {
     return { ok: false, error: describeError(error) };
@@ -644,7 +709,9 @@ export async function resetLocalWallet(deps = {}) {
 
   try {
     try {
-      removeKeyFromConfig(deps); // 先清实际消费者
+      // 仅当 live provider 的明文 key 仍严格等于本机旧钱包 key 时才删除；
+      // 网页 Key、SecretRef、损坏/读不出的配置都不能冒险碰。
+      removeWalletKeyFromConfig(deps, state); // 先清本产品管理的实际消费者
     } catch {
       // 清 provider 失败不阻断清钱包——本地状态优先清干净，config 那半留给下次 applyKey 修。
     }

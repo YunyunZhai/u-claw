@@ -1,6 +1,6 @@
 {
   "_generated": "本文件由 node lib/sync-models.mjs 从 portable/models.json 生成，勿手改；改 models.json 后重新跑同步脚本。",
-  "updated": "2026-07-27",
+  "updated": "2026-09-16",
   "providers": [
     {
       "id": "uclaw-cloud",
@@ -8,15 +8,15 @@
       "tags": [
         {
           "cls": "hot",
-          "text": "首选"
+          "text": "推荐"
         },
         {
-          "cls": "",
-          "text": "中转站"
+          "cls": "cn",
+          "text": "国内直连"
         }
       ],
-      "desc": "一个 Key 用 DeepSeek / Claude / GPT / 通义 等国内外全部大模型，无需翻墙",
-      "base": "https://api.u-claw.org/v1",
+      "desc": "一个 Key 可用多种模型；注册、创建 Key、充值后粘贴到这里即可使用",
+      "base": "https://api.u-claw.org.cn/v1",
       "models": [
         "deepseek-v4-flash",
         "deepseek-v4-pro",
@@ -32,8 +32,8 @@
         "grok-4.5"
       ],
       "recommended": "deepseek-v4-flash",
-      "link": "https://u-claw.org/cloud.html",
-      "linkLabel": "注册 / 充值 / 获取 API Key",
+      "link": "https://api.u-claw.org.cn/register",
+      "linkLabel": "注册并获取 API Key",
       "verified": "relay-200"
     },
     {
