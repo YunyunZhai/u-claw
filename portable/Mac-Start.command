@@ -126,6 +126,10 @@ if [ ! -f "$CONFIG_FILE" ]; then
   "gateway": {
     "mode": "local",
     "auth": { "token": "uclaw" }
+  },
+  "update": {
+    "checkOnStart": false,
+    "auto": { "enabled": false }
   }
 }
 CFGEOF
@@ -177,6 +181,9 @@ export OPENCLAW_CONFIG_PATH="$CONFIG_FILE"
 # (_openclaw-gw._tcp.local), which is unnecessary for local use and triggers
 # "no IPv4 address available on utunN" warnings on machines with VPN/Tailscale.
 export OPENCLAW_DISABLE_BONJOUR=1
+# USB installs can't self-update (not a git checkout) and USB I/O makes an
+# in-place update risky anyway; upgrades ship as a new USB image instead.
+export OPENCLAW_NO_AUTO_UPDATE=1
 
 # ---- 7. Check dependencies ----
 if [ ! -d "$CORE_DIR/node_modules" ]; then

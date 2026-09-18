@@ -27,6 +27,9 @@ set "OPENCLAW_CONFIG_PATH=%STATE_DIR%\openclaw.json"
 REM U-Claw opens the local dashboard directly; disable mDNS discovery on Windows
 REM to avoid OpenClaw/@homebridge ciao crashes during bonjour re-advertise.
 set "OPENCLAW_DISABLE_BONJOUR=1"
+REM USB installs can't self-update (not a git checkout) and USB I/O makes an
+REM in-place update risky anyway; upgrades ship as a new USB image instead.
+set "OPENCLAW_NO_AUTO_UPDATE=1"
 
 REM Check runtime - missing? Auto-run setup (first run on a new PC / incomplete copy).
 REM setup.bat is fully non-interactive on the happy path; only failure branches pause.
@@ -82,7 +85,7 @@ if not exist "%STATE_DIR%\openclaw.json" (
         echo   Config migrated
     ) else (
         echo   First run - creating default config...
-        (echo {"gateway":{"mode":"local","auth":{"token":"uclaw"}}})>"%STATE_DIR%\openclaw.json"
+        (echo {"gateway":{"mode":"local","auth":{"token":"uclaw"}},"update":{"checkOnStart":false,"auto":{"enabled":false}}})>"%STATE_DIR%\openclaw.json"
         echo   Config created
     )
     echo.
