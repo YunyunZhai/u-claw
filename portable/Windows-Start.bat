@@ -21,6 +21,19 @@ set "NODE_DIR=%APP_DIR%\runtime\node-win-x64"
 set "NODE_BIN=%NODE_DIR%\node.exe"
 set "NPM_BIN=%NODE_DIR%\npm.cmd"
 
+REM Optional: run the OpenClaw core from the local drive if a synced copy exists,
+REM instead of cold-reading ~700MB / 48000 files off the USB after a replug.
+REM Windows drops the Standby file cache on unplug, so cold reads jump from ~1.3s
+REM (local SSD) to measured 68.5s (USB). core-local.mjs is fail-open: a missing
+REM local copy just leaves CORE_DIR on the USB. See lib/core-local.mjs.
+set "UCLAW_VERSION="
+set "LOCAL_CORE="
+if exist "%UCLAW_DIR%OPENCLAW_VERSION" for /f "usebackq tokens=*" %%v in ("%UCLAW_DIR%OPENCLAW_VERSION") do set "UCLAW_VERSION=%%v"
+for /f "usebackq tokens=1,* delims==" %%a in (`""%NODE_BIN%" "%UCLAW_DIR%lib\core-local.mjs" "%APP_DIR%" "%STATE_DIR%" "%UCLAW_VERSION%" 2^>nul"`) do (
+    if "%%a"=="UCLAW_LOCAL_CORE" set "LOCAL_CORE=%%b"
+)
+if defined LOCAL_CORE set "CORE_DIR=%LOCAL_CORE%"
+
 set "OPENCLAW_HOME=%DATA_DIR%"
 set "OPENCLAW_STATE_DIR=%STATE_DIR%"
 set "OPENCLAW_CONFIG_PATH=%STATE_DIR%\openclaw.json"

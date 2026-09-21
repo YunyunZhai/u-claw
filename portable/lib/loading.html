@@ -177,12 +177,32 @@ body.ready .ready-wrap { display: block; }
   function poll() {
     if (ready) return;
     // /ready 就绪即显示选择页。no-cors 下拿不到 status，但 fetch 成功 resolve 就说明端口活了。
-    fetch(base + '/ready', { mode: 'no-cors', cache: 'no-store' })
-      .then(function () { showChoice(); })
-      .catch(function () {
-        // 端口还没起，继续等
-        setTimeout(poll, 1000);
-      });
+    //
+    // 关键：到“未监听且无 SYN-ACK”端口的 TCP 连接不会立刻 RST，而是一个 2s~10s
+    // 的 SYN 超时(Windows 实测 ~2s，WSL/部分环境实测 10s+)。若用单发 fetch 等它
+    // 自然失败再重试，gateway 其实 23s 就绪，页面却会被这个超时拖到 60~100s。
+    // 修复：每轮并发发多个探测 + 500ms AbortController 超时，超时即视为“还没起”，
+    // 下一轮马上重探。任一探测在两轮窗口内落到已 LISTEN 的端口即就绪。
+    var probes = 3;              // 3 路并发，错开负荷
+    var done = 0;
+    var succeeded = false;
+    var ctrl = new AbortController();
+    var timer = setTimeout(function () { ctrl.abort(); }, 500);   // 硬超时，防 TCP SYN 长眠
+    for (var i = 0; i < probes; i++) {
+      fetch(base + '/ready', { mode: 'no-cors', cache: 'no-store', signal: ctrl.signal })
+        .then(function () {
+          succeeded = true;
+          showChoice();
+        })
+        .catch(function () {})
+        .finally(function () {
+          done++;
+          if (done === probes) {
+            clearTimeout(timer);
+            if (!succeeded) setTimeout(poll, 700);   // 两轮之间留 700ms，同样短
+          }
+        });
+    }
   }
   poll();
 
