@@ -89,6 +89,33 @@ function runSecretsStoreSet(name, value) {
   });
 }
 
+// Sync a plaintext API key into the agent auth store (SQLite) via
+// `openclaw models auth paste-api-key`.  This is the store that the
+// agent inference pipeline reads; without it the Dashboard "Ask"
+// feature reports "No API key found" even though gateway chat works
+// (gateway resolves global secret refs from openclaw.json).
+function runModelsAuthPasteApiKey(providerId, apiKey) {
+  if (!fs.existsSync(OPENCLAW_MJS)) return Promise.resolve({ ok: false, reason: 'cli-missing' });
+  return new Promise((resolve) => {
+    const child = execFile(process.execPath, [
+      OPENCLAW_MJS, 'models', 'auth', 'paste-api-key', '--provider', providerId,
+    ], {
+      env: secretStoreEnv(),
+      timeout: 60000,
+      windowsHide: true,
+      maxBuffer: 64 * 1024,
+    }, (error) => {
+      if (error) {
+        resolve({ ok: false, reason: error.killed ? 'timeout' : (error.code || 'paste-failed') });
+        return;
+      }
+      resolve({ ok: true });
+    });
+    child.stdin.on('error', () => {});
+    child.stdin.end(apiKey, 'utf8');
+  });
+}
+
 function secretName(prefix, id) {
   return prefix + String(id).toUpperCase().replace(/[^A-Z0-9_]/g, '_');
 }
@@ -120,7 +147,26 @@ async function moveIncomingSecretsToStore(incoming) {
   if (providers && typeof providers === 'object') {
     for (const [providerId, provider] of Object.entries(providers)) {
       if (!provider || typeof provider !== 'object' || !Object.prototype.hasOwnProperty.call(provider, 'apiKey')) continue;
-      provider.apiKey = await storeSecretRef(secretName('UCLAW_MODEL_', providerId), provider.apiKey);
+
+      const plaintextKey = provider.apiKey;
+      // 单一来源：只把 key 写进 agent 静态 auth profile（共享 store
+      // state/openclaw.sqlite）。所有 agent（主 agent、custodian、子 agent）
+      // 通过 read-through 机制在本地 profile 为空时自动读到这里，天然满足
+      // “配置一次、所有组件都能用”。
+      // 不再写 {source:'store'} SecretRef 到 models.providers.<id>.apiKey ——
+      // 那会与 auth profile 冲突，auth profile 优先级更高，导致 SecretRef 被
+      // shadowed，custodian 等 ambient 组件解析时报 “No API key found”。
+      //
+      // 关键：必须把 provider.apiKey 从本次请求里删掉（而不是赋值成 SecretRef），
+      // 这样 merge-config 的“受管字段整体替换”会把磁盘上遗留的旧 apiKey 字段
+      // 一并清掉，彻底消除冲突。
+      delete provider.apiKey;
+      // Agent auth store sync is best-effort, fire-and-forget.
+      // It won't block config save if it fails (e.g. CLI missing, paste-api-key
+      // not yet supported by this OpenClaw version).
+      if (typeof plaintextKey === 'string' && plaintextKey) {
+        runModelsAuthPasteApiKey(providerId, plaintextKey).catch(() => {});
+      }
     }
   }
 
